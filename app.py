@@ -413,7 +413,9 @@ def analisis_wisata():
     
     if not os.path.exists(filepath): return jsonify({'error': 'File not found'}), 404
     
-    with open(filepath) as f: data = json.load(f)
+    with open(filepath, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
     reviews = data.get('reviews', [])
     
     complaint_data = []
