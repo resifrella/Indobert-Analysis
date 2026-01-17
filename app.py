@@ -86,7 +86,7 @@ IGNORE_WORDS = {
 }
 
 key_norm = {
-    "yg": "yang", "gak": "tidak", "ga": "tidak", "g": "tidak", "nggak": "tidak",
+    "yg": "yang", "gak": "tidak", "ga": "tidak", "g": "tidak", "nggak": "tidak", "gk": "tidak",
     "kalo": "kalau", "klo": "kalau", "kl": "kalau",
     "bgt": "banget", "bg": "banget", "dgn": "dengan", "dg": "dengan",
     "krn": "karena", "karna": "karena", "tdk": "tidak", "tak": "tidak",
@@ -200,14 +200,23 @@ def detect_clauses(text):
     return [c.strip() for c in final_clauses if len(c.strip()) > 3]
 
 def predict_sentiment_global(text):
-    if not sentiment_model: return "netral"
+    if not sentiment_model: return "non-negatif" # Default aman
     try:
         inputs = tokenizer(clean_text_user(text), return_tensors="pt", truncation=True, padding=True, max_length=128).to(device)
         with torch.no_grad():
             outputs = sentiment_model(**inputs)
+        
         pred_id = torch.argmax(outputs.logits, dim=1).item()
-        return label_encoder.inverse_transform([pred_id])[0]
-    except: return "netral"
+        original_label = label_encoder.inverse_transform([pred_id])[0] # Hasil asli: positif/netral/negatif
+        
+        # --- MAPPING BARU: 2 KELAS SAJA ---
+        if original_label.lower() == 'negatif':
+            return 'negatif'
+        else:
+            # Positif dan Netral digabung jadi 'non-negatif'
+            return 'non-negatif'
+            
+    except: return "non-negatif"
 
 # --- FUNGSI DARURAT (RESCUE) ---
 def rescue_extraction_window(text):
@@ -419,39 +428,47 @@ def analisis_wisata():
     reviews = data.get('reviews', [])
     
     complaint_data = []
-    count_pos, count_neg, count_neu = 0, 0, 0
+    
+    # UPDATE: Variabel Counter Baru
+    count_negatif = 0
+    count_non_negatif = 0
+    
     all_nno_words = []
     
     for review in reviews:
-        # 1. CBD
+        # 1. Clause Detection
         clauses = detect_clauses(review)
         for clause in clauses:
-            # 2. SENTIMEN
+            # 2. Sentimen (Outputnya sudah pasti 'negatif' atau 'non-negatif')
             sent_label = predict_sentiment_global(clause)
             
-            if sent_label.lower() == 'positif': count_pos += 1
-            elif sent_label.lower() == 'negatif': count_neg += 1
-            else: count_neu += 1
-            
-            # 3. PIPELINE
-            if sent_label.lower() in ['negatif', 'netral']:
-                extracted = extract_complaints_user_algo(clause)
+            if sent_label == 'negatif':
+                count_negatif += 1
                 
+                # 3. Pipeline Ekstraksi (Hanya jalan kalau Negatif)
+                extracted = extract_complaints_user_algo(clause)
                 if extracted:
                     for item in extracted: all_nno_words.append(item.split()[0])
                     complaint_data.append({
                         "Ulasan Negatif": clause, 
                         "Keluhan": ", ".join(extracted)
                     })
+            else:
+                # Ini mencakup Positif & Netral
+                count_non_negatif += 1
 
     top_5 = [{'word': k, 'count': v} for k, v in Counter(all_nno_words).most_common(5)]
     for i, item in enumerate(complaint_data, 1): item['No'] = i
 
+    # UPDATE JSON RESPONSE
     return jsonify({
         'wisata': wisata_name,
-        'total': len(reviews),
-        'positif': count_pos, 'negatif': count_neg, 'netral': count_neu,
-        'results': [], 'complaints': complaint_data, 'top_nouns': top_5
+        'total': len(reviews), # Total klausa/kalimat yang diproses
+        'non_negatif': count_non_negatif, # Gabungan Positif + Netral
+        'negatif': count_negatif,         # Murni Negatif
+        'results': [], 
+        'complaints': complaint_data, 
+        'top_nouns': top_5
     })
 
 if __name__ == '__main__':
